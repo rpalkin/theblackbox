@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 internal import Combine
 
 @main
@@ -46,6 +47,11 @@ struct WhispererApp: App {
         
         Settings {
             SettingsView()
+        }
+
+        Window("Recording History", id: "recording-history") {
+            RecordingHistoryView()
+                .modelContainer(RecordingHistoryStore.sharedModelContainer)
         }
     }
 }
@@ -89,6 +95,7 @@ class RecordingState: ObservableObject {
             self.isRecording = false
             self.isStoppingRecording = false
             self.currentRecordingURL = savedURL
+            self.recordHistoryItem(audioFileURL: savedURL)
             print("[RecordingState] Recording stopped externally and saved to: \(savedURL.path)")
         }
     }
@@ -134,6 +141,7 @@ class RecordingState: ObservableObject {
             isRecording = false
             isStoppingRecording = false
             currentRecordingURL = savedURL
+            recordHistoryItem(audioFileURL: savedURL)
             print("[RecordingState] Recording saved to: \(savedURL.path)")
         } catch {
             print("[RecordingState] Failed to stop recording: \(error)")
@@ -174,6 +182,14 @@ class RecordingState: ObservableObject {
     private func stopTimer() {
         timerTask?.cancel()
         timerTask = nil
+    }
+
+    private func recordHistoryItem(audioFileURL: URL) {
+        do {
+            try RecordingHistoryStore.insertRecording(audioFileURL: audioFileURL, duration: recordingDuration)
+        } catch {
+            print("[RecordingState] Failed to save recording history item: \(error)")
+        }
     }
     
     private func handleError(_ error: Error) {

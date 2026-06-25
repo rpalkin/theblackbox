@@ -12,6 +12,7 @@ struct MenuBarView: View {
     @ObservedObject var recordingState: RecordingState
     @ObservedObject var permissionsManager: PermissionsManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @State private var hoveredItem: String?
     
     var body: some View {
@@ -137,7 +138,27 @@ struct MenuBarView: View {
                 Divider()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                
+
+                MenuButton(
+                    icon: "clock.arrow.circlepath",
+                    iconColor: .primary,
+                    title: "Recording History",
+                    shortcut: "⌘H",
+                    isHovered: hoveredItem == "history"
+                ) {
+                    openWindow(id: "recording-history")
+                    NSApp.activate(ignoringOtherApps: true)
+                    dismiss()
+                }
+                .onHover { hovering in
+                    hoveredItem = hovering ? "history" : nil
+                }
+                .keyboardShortcut("h", modifiers: [.command])
+
+                Divider()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                 
                 // Settings button
                 if #available(macOS 14.0, *) {
                     SettingsLink {

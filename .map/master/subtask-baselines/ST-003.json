@@ -1,0 +1,15 @@
+{
+  "branch": "master",
+  "subtask_id": "ST-003",
+  "recorded_at": "2026-06-25T15:50:43.849707Z",
+  "files": [
+    ".claude/",
+    ".env",
+    ".envrc",
+    ".mcp.json",
+    "whisperer/Models/RecordingHistoryItem.swift",
+    "whisperer/Services/RecordingHistoryStore.swift",
+    "whisperer/whispererApp.swift"
+  ],
+  "head_sha": "c5471830d7e0b5c25be5e227a8d25b12f6765fa6"
+}

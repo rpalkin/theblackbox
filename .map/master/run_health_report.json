@@ -1,0 +1,223 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-06-25T15:57:28.510997Z",
+  "workflow": "map-efficient",
+  "branch": "master",
+  "minimality": "lite",
+  "terminal_status": "complete",
+  "current_step_id": "COMPLETE",
+  "current_step_phase": "COMPLETE",
+  "current_subtask_id": "ST-004",
+  "completed_step_count": 2,
+  "pending_step_count": 0,
+  "artifacts": {
+    "step_state": {
+      "kind": "state",
+      "path": ".map/master/step_state.json",
+      "present": true,
+      "size_bytes": 3032
+    },
+    "artifact_manifest": {
+      "kind": "manifest",
+      "path": ".map/master/artifact_manifest.json",
+      "present": true,
+      "size_bytes": 3489
+    },
+    "verification_summary": {
+      "kind": "verification",
+      "path": ".map/master/verification-summary.md",
+      "present": false,
+      "size_bytes": 0
+    },
+    "qa": {
+      "kind": "qa",
+      "path": ".map/master/qa-001.md",
+      "present": false,
+      "size_bytes": 0
+    },
+    "pr_draft": {
+      "kind": "pr-draft",
+      "path": ".map/master/pr-draft.md",
+      "present": false,
+      "size_bytes": 0
+    },
+    "review_bundle": {
+      "kind": "review-bundle",
+      "path": ".map/master/review-bundle.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "learning_handoff": {
+      "kind": "learning-handoff",
+      "path": ".map/master/learning-handoff.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "task_plan": {
+      "kind": "task-plan",
+      "path": ".map/master/task_plan_master.md",
+      "present": true,
+      "size_bytes": 5758
+    },
+    "blueprint": {
+      "kind": "blueprint",
+      "path": ".map/master/blueprint.json",
+      "present": true,
+      "size_bytes": 8618
+    },
+    "active_issues": {
+      "kind": "active-issues",
+      "path": ".map/master/active-issues.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "known_issues": {
+      "kind": "known-issues",
+      "path": ".map/master/known-issues.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "retry_quarantine": {
+      "kind": "retry-quarantine",
+      "path": ".map/master/retry_quarantine.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "flaky_test_triage": {
+      "kind": "flaky-test-triage",
+      "path": ".map/master/flaky_test_triage.json",
+      "present": false,
+      "size_bytes": 0
+    },
+    "qualitative_convergence": {
+      "kind": "qualitative-convergence",
+      "path": ".map/master/qualitative_convergence.json",
+      "present": false,
+      "size_bytes": 0
+    }
+  },
+  "research": {
+    "schema_version": "1.0",
+    "artifact_count": 5,
+    "valid_artifact_count": 4,
+    "invalid_artifact_count": 1,
+    "low_confidence_artifact_count": 0,
+    "location_count": 15,
+    "research_tokens": 0,
+    "research_est_cost_usd": 0.0,
+    "actor_monitor_tokens": 0,
+    "actor_monitor_est_cost_usd": 0.0,
+    "research_token_share": 0.0,
+    "by_subtask": {
+      "ST-001": {
+        "artifact_count": 1,
+        "valid_artifact_count": 1,
+        "invalid_artifact_count": 0,
+        "low_confidence_artifact_count": 0,
+        "location_count": 3,
+        "statuses": [
+          "OK"
+        ],
+        "kinds": [
+          "actor"
+        ],
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0
+      },
+      "ST-002": {
+        "artifact_count": 1,
+        "valid_artifact_count": 1,
+        "invalid_artifact_count": 0,
+        "low_confidence_artifact_count": 0,
+        "location_count": 4,
+        "statuses": [
+          "OK"
+        ],
+        "kinds": [
+          "actor"
+        ],
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0
+      },
+      "ST-003": {
+        "artifact_count": 1,
+        "valid_artifact_count": 1,
+        "invalid_artifact_count": 0,
+        "low_confidence_artifact_count": 0,
+        "location_count": 4,
+        "statuses": [
+          "OK"
+        ],
+        "kinds": [
+          "actor"
+        ],
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0
+      },
+      "ST-004": {
+        "artifact_count": 1,
+        "valid_artifact_count": 1,
+        "invalid_artifact_count": 0,
+        "low_confidence_artifact_count": 0,
+        "location_count": 4,
+        "statuses": [
+          "OK"
+        ],
+        "kinds": [
+          "actor"
+        ],
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0
+      },
+      "plan": {
+        "artifact_count": 1,
+        "valid_artifact_count": 0,
+        "invalid_artifact_count": 1,
+        "low_confidence_artifact_count": 0,
+        "location_count": 0,
+        "statuses": [],
+        "kinds": [
+          "discovery"
+        ],
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0
+      }
+    },
+    "warnings": [
+      "plan__discovery.md: artifact must be strict JSON: Expecting value"
+    ]
+  },
+  "resiliency_signals": {
+    "hook_injection": {
+      "status": "unknown",
+      "reason": "not recorded"
+    },
+    "hook_injection_counts": {},
+    "retry_count": 0,
+    "max_retries": 5,
+    "subtask_retry_counts": {},
+    "max_subtask_retry_count": 0,
+    "clean_retry_count": 0,
+    "contaminated_retry_count": 0,
+    "retry_isolation_status": {},
+    "guard_rework_counts": {},
+    "predictor_called": false,
+    "predictor_skipped": false,
+    "final_verifier_executed": false
+  }
+}
