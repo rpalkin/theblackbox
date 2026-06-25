@@ -51,4 +51,12 @@ enum RecordingHistoryStore {
         container.mainContext.insert(item)
         try container.mainContext.save()
     }
+
+    @MainActor
+    static func updateTranscription(item: RecordingHistoryItem, textMe: String, textAudio: String) throws {
+        let modelContext = sharedModelContainer.mainContext
+        item.text_me = textMe
+        item.text_audio = textAudio
+        try modelContext.save()
+    }
 }

@@ -25,4 +25,8 @@ paths:
 - **Shared SwiftData container boundary** (2026-06-25): When multiple app flows insert and query the same SwiftData records, always centralize `ModelContainer` creation in a store boundary because separate ad-hoc containers can drift in schema, location, or lifecycle. [workflow: map-efficient]
 
 - **Persist only after finalized outputs** (2026-06-25): When recording completion has success, cancel, and error paths, always insert history only from paths that have a finalized saved file URL because cancel/failure paths can otherwise persist partial or deleted recordings. [workflow: map-efficient]
+
+- **Empty-buffer short-circuit before ML model invocation** (2026-06-25): When decoding optional audio tracks before passing samples to an ML model, always check for an empty result before calling the model — an absent legacy track legitimately returns `[]` from AVAssetReader, and feeding empty input to ML APIs either crashes or produces garbage. Map empty extraction to empty string at the service layer. [workflow: map-efficient]
+
+- **Wrap third-party progress types into local published primitives** (2026-06-25): When integrating a library that exposes its own progress/phase types (e.g. `DownloadUtils.DownloadProgress`), always wrap them into local enums and `@Published Double?` / `enum?` properties on your own `@MainActor ObservableObject`. This prevents library types from leaking into SwiftUI view bindings and insulates view code from upstream API churn. [workflow: map-efficient]
 <!-- map:end -->

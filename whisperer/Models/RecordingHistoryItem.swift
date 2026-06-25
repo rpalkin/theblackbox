@@ -10,6 +10,8 @@ import SwiftData
 final class RecordingHistoryItem {
     var timestamp: Date
     var duration: TimeInterval
+    var text_me: String?
+    var text_audio: String?
     private var audioFilePath: String
 
     var audioFileURL: URL {

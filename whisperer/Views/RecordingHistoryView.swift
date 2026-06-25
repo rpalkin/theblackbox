@@ -9,6 +9,12 @@ import SwiftData
 struct RecordingHistoryView: View {
     @Query(sort: [SortDescriptor(\RecordingHistoryItem.timestamp, order: .reverse)]) private var recordings: [RecordingHistoryItem]
     @State private var searchText = ""
+    @EnvironmentObject var modelManager: FluidAudioModelManager
+    let transcriptionService: FluidAudioTranscriptionService
+
+    init(transcriptionService: FluidAudioTranscriptionService) {
+        self.transcriptionService = transcriptionService
+    }
 
     private var filteredRecordings: [RecordingHistoryItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -40,7 +46,11 @@ struct RecordingHistoryView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(filteredRecordings) { item in
-                            RecordingHistoryRow(item: item)
+                            RecordingHistoryRow(
+                                item: item,
+                                modelManager: modelManager,
+                                transcriptionService: transcriptionService
+                            )
                         }
                     }
                     .padding(16)
@@ -120,6 +130,42 @@ struct RecordingHistoryView: View {
 
 private struct RecordingHistoryRow: View {
     let item: RecordingHistoryItem
+    @ObservedObject var modelManager: FluidAudioModelManager
+    @StateObject private var viewModel: TranscriptionRowViewModel
+
+    init(
+        item: RecordingHistoryItem,
+        modelManager: FluidAudioModelManager,
+        transcriptionService: FluidAudioTranscriptionService
+    ) {
+        self.item = item
+        self.modelManager = modelManager
+        _viewModel = StateObject(wrappedValue: TranscriptionRowViewModel(
+            transcriptionService: transcriptionService,
+            modelManager: modelManager
+        ))
+    }
+
+    private var fileExists: Bool {
+        FileManager.default.fileExists(atPath: item.audioFileURL.path)
+    }
+
+    private var transcribeButtonLabel: String {
+        guard viewModel.isTranscribingThisRow else { return "Transcribe" }
+        return modelManager.downloadProgress != nil ? "Downloading model…" : "Transcribing…"
+    }
+
+    private var transcribeButtonDisabled: Bool {
+        !fileExists || modelManager.isTranscribing
+    }
+
+    private var transcribeButtonTooltip: String {
+        if !fileExists { return "Recording file not found" }
+        if modelManager.isTranscribing && !viewModel.isTranscribingThisRow {
+            return "Another transcription is running"
+        }
+        return ""
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -162,6 +208,29 @@ private struct RecordingHistoryRow: View {
                     }
                     .buttonStyle(.link)
                     .font(.caption)
+
+                    Button(transcribeButtonLabel) {
+                        viewModel.transcribe(item: item)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .disabled(transcribeButtonDisabled)
+                    .help(transcribeButtonTooltip)
+                }
+
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let textMe = item.text_me, !textMe.isEmpty {
+                    TranscriptionTextView(label: "Me", text: textMe)
+                }
+
+                if let textAudio = item.text_audio, !textAudio.isEmpty {
+                    TranscriptionTextView(label: "System", text: textAudio)
                 }
             }
         }
@@ -191,4 +260,25 @@ private struct RecordingHistoryRow: View {
         formatter.zeroFormattingBehavior = .pad
         return formatter
     }()
+}
+
+private struct TranscriptionTextView: View {
+    let label: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
 }

@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @StateObject private var settings = AppSettings.shared
+    @EnvironmentObject var modelManager: FluidAudioModelManager
     @State private var isDirectoryWritable: Bool = true
     
     var body: some View {
@@ -82,12 +83,36 @@ struct SettingsView: View {
                         .font(.caption)
                     }
                 }
+
+                Divider()
+
+                // Transcription Section
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Transcription", systemImage: "text.bubble")
+                        .font(.subheadline.weight(.medium))
+
+                    FluidAudioModelCardView(manager: modelManager)
+
+                    HStack {
+                        Text("Language")
+                            .font(.subheadline)
+                        Spacer()
+                        Picker("Language", selection: $settings.transcriptionLanguage) {
+                            ForEach(AppSettings.transcriptionLanguages, id: \.code) { lang in
+                                Text(lang.label).tag(lang.code)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(width: 140)
+                    }
+                }
             }
             .padding()
-            
+
             Spacer()
         }
-        .frame(width: 380, height: 250)
+        .frame(width: 380, height: 440)
         .onAppear {
             checkDirectoryWritable()
         }
@@ -133,4 +158,5 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView()
+        .environmentObject(FluidAudioModelManager())
 }

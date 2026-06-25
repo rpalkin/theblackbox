@@ -13,13 +13,19 @@ internal import Combine
 struct WhispererApp: App {
     @StateObject private var permissionsManager = PermissionsManager()
     @StateObject private var recordingState: RecordingState
-    
+    @StateObject private var modelManager: FluidAudioModelManager
+    private let transcriptionService: FluidAudioTranscriptionService
+
     init() {
         let permissions = PermissionsManager()
         let state = RecordingState(permissionsManager: permissions)
+        let manager = FluidAudioModelManager()
+        let service = FluidAudioTranscriptionService(manager: manager)
         _permissionsManager = StateObject(wrappedValue: permissions)
         _recordingState = StateObject(wrappedValue: state)
-        
+        _modelManager = StateObject(wrappedValue: manager)
+        self.transcriptionService = service
+
         // Configure PopupWindowManager with callbacks
         PopupWindowManager.shared.configure(
             onStopRecording: { [weak state] in
@@ -31,7 +37,7 @@ struct WhispererApp: App {
             }
         )
     }
-    
+
     var body: some Scene {
         MenuBarExtra {
             MenuBarView(recordingState: recordingState, permissionsManager: permissionsManager)
@@ -44,14 +50,16 @@ struct WhispererApp: App {
             }
         }
         .menuBarExtraStyle(.window)
-        
+
         Settings {
             SettingsView()
+                .environmentObject(modelManager)
         }
 
         Window("Recording History", id: "recording-history") {
-            RecordingHistoryView()
+            RecordingHistoryView(transcriptionService: transcriptionService)
                 .modelContainer(RecordingHistoryStore.sharedModelContainer)
+                .environmentObject(modelManager)
         }
     }
 }

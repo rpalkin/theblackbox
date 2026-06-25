@@ -19,6 +19,25 @@ class AppSettings: ObservableObject {
             _isOutputDirectoryWritable = nil
         }
     }
+
+    @Published var transcriptionLanguage: String {
+        didSet {
+            UserDefaults.standard.set(transcriptionLanguage, forKey: "transcriptionLanguage")
+        }
+    }
+
+    static let transcriptionLanguages: [(code: String, label: String)] = [
+        ("auto", "Auto-detect"),
+        ("en", "English"),
+        ("es", "Spanish"),
+        ("de", "German"),
+        ("fr", "French"),
+        ("ru", "Russian"),
+        ("pt", "Portuguese"),
+        ("it", "Italian"),
+        ("nl", "Dutch"),
+        ("pl", "Polish"),
+    ]
     
     /// Cached result of directory writability check
     private var _isOutputDirectoryWritable: Bool?
@@ -35,7 +54,9 @@ class AppSettings: ObservableObject {
         } else {
             self.outputDirectory = defaultDir
         }
-        
+
+        self.transcriptionLanguage = defaults.string(forKey: "transcriptionLanguage") ?? "auto"
+
         // Create default directory if needed
         if self.outputDirectory == defaultDir {
             try? FileManager.default.createDirectory(at: URL(fileURLWithPath: defaultDir), withIntermediateDirectories: true, attributes: nil)
