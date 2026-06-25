@@ -15,8 +15,20 @@ struct WhispererApp: App {
     
     init() {
         let permissions = PermissionsManager()
+        let state = RecordingState(permissionsManager: permissions)
         _permissionsManager = StateObject(wrappedValue: permissions)
-        _recordingState = StateObject(wrappedValue: RecordingState(permissionsManager: permissions))
+        _recordingState = StateObject(wrappedValue: state)
+        
+        // Configure PopupWindowManager with callbacks
+        PopupWindowManager.shared.configure(
+            onStopRecording: { [weak state] in
+                state?.stopRecording()
+            },
+            onKeepRecording: {
+                // Just dismisses - monitoring continues for next Zoom close
+                print("[WhispererApp] User chose to keep recording")
+            }
+        )
     }
     
     var body: some Scene {
@@ -51,9 +63,34 @@ class RecordingState: ObservableObject {
     
     private var timerTask: Task<Void, Never>?
     private let recordingService: AudioRecordingService
+    private let systemStopMonitor = SystemRecordingStopMonitor()
+    private var isStoppingRecording = false
     
     init(permissionsManager: PermissionsManager) {
         self.recordingService = AudioRecordingService(permissionsManager: permissionsManager)
+        
+        // Wire up Zoom window close detection to show popup
+        self.recordingService.onZoomWindowClosed = { [weak self] in
+            guard self != nil else { return }
+            print("[RecordingState] Zoom window closed - showing popup")
+            PopupWindowManager.shared.showPopup()
+        }
+
+        self.systemStopMonitor.onStopRequested = { [weak self] reason in
+            guard let self = self else { return }
+            print("[RecordingState] System event detected (\(reason.rawValue)) - stopping recording")
+            self.stopRecording()
+        }
+
+        self.recordingService.onRecordingStoppedExternally = { [weak self] savedURL in
+            guard let self = self else { return }
+            self.stopTimer()
+            self.systemStopMonitor.stopMonitoring()
+            self.isRecording = false
+            self.isStoppingRecording = false
+            self.currentRecordingURL = savedURL
+            print("[RecordingState] Recording stopped externally and saved to: \(savedURL.path)")
+        }
     }
     
     func startRecording() {
@@ -69,6 +106,7 @@ class RecordingState: ObservableObject {
             isRecording = true
             recordingDuration = 0
             currentRecordingURL = recordingService.currentRecordingURL
+            systemStopMonitor.startMonitoring()
             startTimer()
             print("[RecordingState] Recording started")
         } catch {
@@ -78,6 +116,9 @@ class RecordingState: ObservableObject {
     }
     
     func stopRecording() {
+        guard isRecording, !isStoppingRecording else { return }
+
+        isStoppingRecording = true
         Task {
             await stopRecordingAsync()
         }
@@ -86,15 +127,18 @@ class RecordingState: ObservableObject {
     @available(macOS 15.0, *)
     private func stopRecordingAsync() async {
         stopTimer()
+        systemStopMonitor.stopMonitoring()
         
         do {
             let savedURL = try await recordingService.stopRecording()
             isRecording = false
+            isStoppingRecording = false
             currentRecordingURL = savedURL
             print("[RecordingState] Recording saved to: \(savedURL.path)")
         } catch {
             print("[RecordingState] Failed to stop recording: \(error)")
             isRecording = false
+            isStoppingRecording = false
             handleError(error)
         }
     }
@@ -108,8 +152,10 @@ class RecordingState: ObservableObject {
     @available(macOS 15.0, *)
     private func cancelRecordingAsync() async {
         stopTimer()
+        systemStopMonitor.stopMonitoring()
         await recordingService.cancelRecording()
         isRecording = false
+        isStoppingRecording = false
         currentRecordingURL = nil
         print("[RecordingState] Recording cancelled")
     }

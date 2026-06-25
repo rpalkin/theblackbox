@@ -81,11 +81,20 @@ class AudioRecordingService: NSObject, ObservableObject {
     @Published private(set) var currentRecordingURL: URL?
     @Published private(set) var lastError: Error?
     
+    // MARK: - Callbacks
+    
+    /// Called when a Zoom window closes during recording
+    var onZoomWindowClosed: (() -> Void)?
+
+    /// Called when ScreenCaptureKit stops recording because the capture target disappeared.
+    var onRecordingStoppedExternally: ((URL) -> Void)?
+    
     // MARK: - Private Properties
     
     private var audioCapture: UnifiedAudioCapture?
     private let settings: AppSettings
     private let permissionsManager: PermissionsManager
+    private var windowMonitor: WindowMonitorService?
     
     // MARK: - Initialization
     
@@ -135,12 +144,16 @@ class AudioRecordingService: NSObject, ObservableObject {
         // Start capture
         do {
             let outputURL = try await capture.startCapture(
-                to: settings.outputDirectory,
-                format: settings.audioFormat
+                to: settings.outputDirectory
             )
             currentRecordingURL = outputURL
             state = .recording
             print("[AudioRecordingService] Recording started successfully to: \(outputURL.path)")
+            
+            // Start window monitoring
+            windowMonitor = WindowMonitorService()
+            windowMonitor?.delegate = self
+            windowMonitor?.startMonitoring()
         } catch {
             handleError(AudioRecordingError.captureError(error))
             throw AudioRecordingError.captureError(error)
@@ -170,6 +183,10 @@ class AudioRecordingService: NSObject, ObservableObject {
             let savedURL = try await capture.stopCapture()
             print("[AudioRecordingService] Recording saved to: \(savedURL.path)")
             
+            // Stop window monitoring
+            windowMonitor?.stopMonitoring()
+            windowMonitor = nil
+            
             state = .idle
             audioCapture = nil
             
@@ -193,6 +210,10 @@ class AudioRecordingService: NSObject, ObservableObject {
             await capture.cancelCapture()
         }
         audioCapture = nil
+        
+        // Stop window monitoring
+        windowMonitor?.stopMonitoring()
+        windowMonitor = nil
         
         currentRecordingURL = nil
         state = .idle
@@ -235,6 +256,35 @@ class AudioRecordingService: NSObject, ObservableObject {
             }
         }
     }
+
+    @available(macOS 15.0, *)
+    private func finishRecordingAfterUnexpectedCaptureStop(_ capture: UnifiedAudioCapture) async {
+        guard state == .recording, capture === audioCapture else { return }
+
+        print("[AudioRecordingService] Finalizing recording after capture target disappeared")
+        state = .stopping
+
+        do {
+            let savedURL = try await capture.finishCaptureAfterUnexpectedStreamStop()
+            print("[AudioRecordingService] Recording saved after external capture stop: \(savedURL.path)")
+
+            windowMonitor?.stopMonitoring()
+            windowMonitor = nil
+            audioCapture = nil
+            currentRecordingURL = savedURL
+            state = .idle
+
+            showSaveNotification(url: savedURL)
+            onRecordingStoppedExternally?(savedURL)
+        } catch {
+            handleError(AudioRecordingError.captureError(error))
+        }
+    }
+
+    private func isCaptureTargetUnavailableError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3815
+    }
 }
 
 // MARK: - UnifiedAudioCaptureDelegate
@@ -247,6 +297,14 @@ extension AudioRecordingService: UnifiedAudioCaptureDelegate {
     
     func unifiedAudioCapture(_ capture: UnifiedAudioCapture, didFailWithError error: Error) {
         print("[AudioRecordingService] Capture failed: \(error)")
+
+        if #available(macOS 15.0, *), isCaptureTargetUnavailableError(error), state == .recording {
+            Task {
+                await finishRecordingAfterUnexpectedCaptureStop(capture)
+            }
+            return
+        }
+
         handleError(AudioRecordingError.captureError(error))
     }
     
@@ -255,6 +313,18 @@ extension AudioRecordingService: UnifiedAudioCaptureDelegate {
         // If we're still in recording state, this was an unexpected stop
         if state == .recording {
             handleError(AudioRecordingError.unknownError("Audio capture stopped unexpectedly"))
+        }
+    }
+}
+
+// MARK: - WindowMonitorServiceDelegate
+
+extension AudioRecordingService: WindowMonitorServiceDelegate {
+    func windowMonitorServiceDidDetectZoomWindowClose(_ service: WindowMonitorService) {
+        print("[AudioRecordingService] Zoom window closed detected")
+        // Only notify if we're currently recording
+        if state == .recording {
+            onZoomWindowClosed?()
         }
     }
 }

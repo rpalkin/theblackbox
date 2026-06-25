@@ -7,6 +7,7 @@
 
 import Foundation
 import ScreenCaptureKit
+internal import CoreGraphics
 internal import AVFoundation
 internal import CoreMedia
 internal import Combine
@@ -87,10 +88,9 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
     /// Start capturing and recording unified audio (system audio + microphone) directly to file
     /// - Parameters:
     ///   - directory: The directory to save the recording
-    ///   - format: The audio format to use (.m4a or .wav)
     /// - Returns: The URL where the recording will be saved
     @available(macOS 15.0, *)
-    func startCapture(to directory: String, format: AppSettings.AudioFormat) async throws -> URL {
+    func startCapture(to directory: String) async throws -> URL {
         guard !isCapturing else {
             throw UnifiedAudioCaptureError.alreadyCapturing
         }
@@ -106,7 +106,7 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
         }
         
         // Generate unique filename with timestamp
-        let filename = generateFilename(format: format)
+        let filename = generateFilename()
         let outputURL = directoryURL.appendingPathComponent(filename)
         
         print("[UnifiedAudioCapture] Will record to: \(outputURL.path)")
@@ -120,8 +120,9 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
             throw UnifiedAudioCaptureError.permissionDenied
         }
         
-        // Get the main display
-        guard let display = content.displays.first else {
+        // ScreenCaptureKit requires a display even for audio-only capture. Prefer the
+        // built-in display so unplugging external monitors does not invalidate capture.
+        guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) ?? content.displays.first else {
             print("[UnifiedAudioCapture] No displays available")
             throw UnifiedAudioCaptureError.noDisplaysAvailable
         }
@@ -157,7 +158,6 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
         do {
             fileWriter = try AudioFileWriter(
                 url: outputURL,
-                format: format,
                 sampleRate: sampleRate,
                 channelCount: channelCount
             )
@@ -224,28 +224,20 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
             throw UnifiedAudioCaptureError.notCapturing
         }
         
-        print("[UnifiedAudioCapture] Stopping capture...")
-        
-        do {
-            try await stream.stopCapture()
-            print("[UnifiedAudioCapture] Capture stopped successfully")
-        } catch {
-            print("[UnifiedAudioCapture] Error stopping capture: \(error)")
-            // Continue cleanup even if stop fails
+        return await finishCapture(outputURL: outputURL, streamToStop: stream)
+    }
+
+    @available(macOS 15.0, *)
+    func finishCaptureAfterUnexpectedStreamStop() async throws -> URL {
+        guard isCapturing else {
+            throw UnifiedAudioCaptureError.notCapturing
         }
-        
-        if let handler = outputHandler {
-            await handler.fileWriter.finish()
+
+        guard let outputURL = currentRecordingURL else {
+            throw UnifiedAudioCaptureError.notCapturing
         }
-        
-        self.stream = nil
-        self.outputHandler = nil
-        self.isCapturing = false
-        
-        delegate?.unifiedAudioCaptureDidStop(self)
-        
-        print("[UnifiedAudioCapture] Recording saved to: \(outputURL.path)")
-        return outputURL
+
+        return await finishCapture(outputURL: outputURL, streamToStop: nil)
     }
     
     /// Cancel recording and delete partial file
@@ -286,11 +278,41 @@ class UnifiedAudioCapture: NSObject, ObservableObject {
     // MARK: - Private Methods
     
     /// Generate a unique filename with timestamp
-    private func generateFilename(format: AppSettings.AudioFormat) -> String {
+    private func generateFilename() -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = dateFormatter.string(from: Date())
-        return "Recording_\(timestamp).\(format.fileExtension)"
+        return "Recording_\(timestamp).m4a"
+    }
+
+    @available(macOS 15.0, *)
+    private func finishCapture(outputURL: URL, streamToStop: SCStream?) async -> URL {
+        print("[UnifiedAudioCapture] Stopping capture...")
+
+        if let streamToStop {
+            do {
+                try await streamToStop.stopCapture()
+                print("[UnifiedAudioCapture] Capture stopped successfully")
+            } catch {
+                print("[UnifiedAudioCapture] Error stopping capture: \(error)")
+                // Continue cleanup even if stop fails
+            }
+        } else {
+            print("[UnifiedAudioCapture] Stream already stopped; finalizing recording")
+        }
+
+        if let handler = outputHandler {
+            await handler.fileWriter.finish()
+        }
+
+        self.stream = nil
+        self.outputHandler = nil
+        self.isCapturing = false
+
+        delegate?.unifiedAudioCaptureDidStop(self)
+
+        print("[UnifiedAudioCapture] Recording saved to: \(outputURL.path)")
+        return outputURL
     }
 }
 
@@ -306,198 +328,6 @@ extension UnifiedAudioCapture: SCStreamDelegate {
     }
 }
 
-// MARK: - Audio Normalizer
-
-/// Audio normalizer that balances volume levels between system audio and microphone
-private class AudioNormalizer {
-    // Target RMS level in linear scale (approximately -12 dB)
-    private let targetRMSLevel: Float = 0.25
-    
-    // Smoothing factor for level tracking (0-1, higher = faster response)
-    private let smoothingFactor: Float = 0.1
-    
-    // Current tracked RMS levels for each source
-    private var systemAudioRMS: Float = 0.0
-    private var microphoneRMS: Float = 0.0
-    
-    // Current gain values
-    private var systemAudioGain: Float = 1.0
-    private var microphoneGain: Float = 1.0
-    
-    // Minimum and maximum gain limits to prevent extreme adjustments
-    private let minGain: Float = 0.1
-    private let maxGain: Float = 10.0
-    
-    // Number of samples to analyze before applying normalization
-    private var systemSampleCount: Int = 0
-    private var micSampleCount: Int = 0
-    private let warmupSamples: Int = 10  // Wait for this many samples before normalizing
-    
-    /// Calculate RMS level from audio buffer
-    private func calculateRMS(from buffer: UnsafeMutablePointer<Float>, count: Int) -> Float {
-        var rms: Float = 0.0
-        vDSP_rmsqv(buffer, 1, &rms, vDSP_Length(count))
-        return rms
-    }
-    
-    /// Apply gain to audio buffer in place
-    private func applyGain(_ gain: Float, to buffer: UnsafeMutablePointer<Float>, count: Int) {
-        var gainValue = gain
-        vDSP_vsmul(buffer, 1, &gainValue, buffer, 1, vDSP_Length(count))
-        
-        // Clip to prevent distortion
-        var minVal: Float = -1.0
-        var maxVal: Float = 1.0
-        vDSP_vclip(buffer, 1, &minVal, &maxVal, buffer, 1, vDSP_Length(count))
-    }
-    
-    /// Update gain based on current RMS level
-    private func updateGain(currentRMS: Float, currentGain: inout Float) {
-        guard currentRMS > 0.001 else { return }  // Ignore very quiet signals
-        
-        // Calculate desired gain to reach target level
-        let desiredGain = targetRMSLevel / currentRMS
-        
-        // Smooth the gain change to avoid sudden jumps
-        let newGain = currentGain + smoothingFactor * (desiredGain - currentGain)
-        
-        // Clamp to limits
-        currentGain = max(minGain, min(maxGain, newGain))
-    }
-    
-    /// Process and normalize a sample buffer
-    /// - Parameters:
-    ///   - sampleBuffer: The audio sample buffer to process
-    ///   - type: The type of audio (system or microphone)
-    /// - Returns: A new normalized sample buffer, or the original if processing fails
-    func normalize(_ sampleBuffer: CMSampleBuffer, type: SCStreamOutputType) -> CMSampleBuffer {
-        // Get audio buffer
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
-            return sampleBuffer
-        }
-        
-        var length: Int = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        
-        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-        
-        guard status == kCMBlockBufferNoErr, let data = dataPointer else {
-            return sampleBuffer
-        }
-        
-        // Get format description to determine sample format
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
-            return sampleBuffer
-        }
-        
-        let bytesPerSample = Int(asbd.pointee.mBytesPerFrame)
-        let sampleCount = length / bytesPerSample
-        
-        guard sampleCount > 0 else { return sampleBuffer }
-        
-        // Convert to float for processing
-        var floatBuffer = [Float](repeating: 0, count: sampleCount)
-        
-        // Handle different audio formats
-        if asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
-            // Already float format
-            data.withMemoryRebound(to: Float.self, capacity: sampleCount) { floatPtr in
-                floatBuffer = Array(UnsafeBufferPointer(start: floatPtr, count: sampleCount))
-            }
-        } else if asbd.pointee.mBitsPerChannel == 16 {
-            // 16-bit integer format
-            data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { int16Ptr in
-                var scale: Float = 1.0 / 32768.0
-                var tempBuffer = [Float](repeating: 0, count: sampleCount)
-                vDSP_vflt16(int16Ptr, 1, &tempBuffer, 1, vDSP_Length(sampleCount))
-                vDSP_vsmul(tempBuffer, 1, &scale, &floatBuffer, 1, vDSP_Length(sampleCount))
-            }
-        } else if asbd.pointee.mBitsPerChannel == 32 {
-            // 32-bit integer format
-            data.withMemoryRebound(to: Int32.self, capacity: sampleCount) { int32Ptr in
-                var scale: Float = 1.0 / Float(Int32.max)
-                var tempBuffer = [Float](repeating: 0, count: sampleCount)
-                vDSP_vflt32(int32Ptr, 1, &tempBuffer, 1, vDSP_Length(sampleCount))
-                vDSP_vsmul(tempBuffer, 1, &scale, &floatBuffer, 1, vDSP_Length(sampleCount))
-            }
-        } else {
-            // Unsupported format, return original
-            return sampleBuffer
-        }
-        
-        // Calculate current RMS
-        let currentRMS = calculateRMS(from: &floatBuffer, count: sampleCount)
-        
-        // Update tracking and gain based on source type
-        switch type {
-        case .audio:
-            systemSampleCount += 1
-            systemAudioRMS = systemAudioRMS * (1 - smoothingFactor) + currentRMS * smoothingFactor
-            if systemSampleCount > warmupSamples {
-                updateGain(currentRMS: systemAudioRMS, currentGain: &systemAudioGain)
-            }
-            applyGain(systemAudioGain, to: &floatBuffer, count: sampleCount)
-            
-        case .microphone:
-            micSampleCount += 1
-            microphoneRMS = microphoneRMS * (1 - smoothingFactor) + currentRMS * smoothingFactor
-            if micSampleCount > warmupSamples {
-                updateGain(currentRMS: microphoneRMS, currentGain: &microphoneGain)
-            }
-            applyGain(microphoneGain, to: &floatBuffer, count: sampleCount)
-            
-        default:
-            return sampleBuffer
-        }
-        
-        // Convert back to original format and create new sample buffer
-        if asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
-            // Write back float data
-            floatBuffer.withUnsafeBufferPointer { bufferPtr in
-                data.withMemoryRebound(to: Float.self, capacity: sampleCount) { floatPtr in
-                    floatPtr.update(from: bufferPtr.baseAddress!, count: sampleCount)
-                }
-            }
-        } else if asbd.pointee.mBitsPerChannel == 16 {
-            // Convert back to 16-bit integer
-            var scale: Float = 32767.0
-            var scaledBuffer = [Float](repeating: 0, count: sampleCount)
-            vDSP_vsmul(floatBuffer, 1, &scale, &scaledBuffer, 1, vDSP_Length(sampleCount))
-            
-            data.withMemoryRebound(to: Int16.self, capacity: sampleCount) { int16Ptr in
-                for i in 0..<sampleCount {
-                    int16Ptr[i] = Int16(max(-32768, min(32767, scaledBuffer[i])))
-                }
-            }
-        } else if asbd.pointee.mBitsPerChannel == 32 {
-            // Convert back to 32-bit integer
-            var scale: Float = Float(Int32.max)
-            var scaledBuffer = [Float](repeating: 0, count: sampleCount)
-            vDSP_vsmul(floatBuffer, 1, &scale, &scaledBuffer, 1, vDSP_Length(sampleCount))
-            
-            data.withMemoryRebound(to: Int32.self, capacity: sampleCount) { int32Ptr in
-                for i in 0..<sampleCount {
-                    int32Ptr[i] = Int32(max(Float(Int32.min), min(Float(Int32.max), scaledBuffer[i])))
-                }
-            }
-        }
-        
-        // Return the modified buffer (we modified in place)
-        return sampleBuffer
-    }
-    
-    /// Get current gain levels for debugging/display
-    func getCurrentGains() -> (systemAudio: Float, microphone: Float) {
-        return (systemAudioGain, microphoneGain)
-    }
-    
-    /// Get current RMS levels for debugging/display
-    func getCurrentLevels() -> (systemAudio: Float, microphone: Float) {
-        return (systemAudioRMS, microphoneRMS)
-    }
-}
-
 // MARK: - Helper Classes
 
 private class AudioFileWriter {
@@ -507,24 +337,15 @@ private class AudioFileWriter {
     private var isSessionStarted = false
     var onError: ((Error) -> Void)?
     
-    init(url: URL, format: AppSettings.AudioFormat, sampleRate: Double, channelCount: Int) throws {
-        self.writer = try AVAssetWriter(outputURL: url, fileType: format == .m4a ? .m4a : .wav)
+    init(url: URL, sampleRate: Double, channelCount: Int) throws {
+        self.writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
         
-        var audioSettings: [String: Any] = [
+        let audioSettings: [String: Any] = [
             AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: channelCount
+            AVNumberOfChannelsKey: channelCount,
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVEncoderBitRateKey: 128000
         ]
-        
-        if format == .m4a {
-            audioSettings[AVFormatIDKey] = kAudioFormatMPEG4AAC
-            audioSettings[AVEncoderBitRateKey] = 128000
-        } else {
-            audioSettings[AVFormatIDKey] = kAudioFormatLinearPCM
-            audioSettings[AVLinearPCMBitDepthKey] = 16
-            audioSettings[AVLinearPCMIsFloatKey] = false
-            audioSettings[AVLinearPCMIsBigEndianKey] = false
-            audioSettings[AVLinearPCMIsNonInterleaved] = false
-        }
         
         // We need separate inputs for system audio and mic if we want to record both.
         // AVAssetWriter can handle multiple inputs.
@@ -585,16 +406,12 @@ private class AudioFileWriter {
 
 private class StreamOutputHandler: NSObject, SCStreamOutput {
     let fileWriter: AudioFileWriter
-    let normalizer: AudioNormalizer
     
     init(fileWriter: AudioFileWriter) {
         self.fileWriter = fileWriter
-        self.normalizer = AudioNormalizer()
     }
     
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        // Apply normalization before writing
-        let normalizedBuffer = normalizer.normalize(sampleBuffer, type: type)
-        fileWriter.append(normalizedBuffer, type: type)
+        fileWriter.append(sampleBuffer, type: type)
     }
 }

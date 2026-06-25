@@ -23,33 +23,6 @@ class AppSettings: ObservableObject {
     /// Cached result of directory writability check
     private var _isOutputDirectoryWritable: Bool?
     
-    @Published var audioFormat: AudioFormat {
-        didSet {
-            UserDefaults.standard.set(audioFormat.rawValue, forKey: "audioFormat")
-        }
-    }
-    
-    enum AudioFormat: String, CaseIterable, Identifiable {
-        case m4a
-        case wav
-        
-        var id: String { self.rawValue }
-        
-        var fileExtension: String {
-            switch self {
-            case .m4a: return "m4a"
-            case .wav: return "wav"
-            }
-        }
-        
-        var displayName: String {
-            switch self {
-            case .m4a: return "MPEG-4 Audio (AAC)"
-            case .wav: return "Waveform Audio (WAV)"
-            }
-        }
-    }
-    
     init() {
         let defaults = UserDefaults.standard
         
@@ -61,13 +34,6 @@ class AppSettings: ObservableObject {
             self.outputDirectory = savedDir
         } else {
             self.outputDirectory = defaultDir
-        }
-        
-        if let rawFormat = defaults.string(forKey: "audioFormat"),
-           let format = AudioFormat(rawValue: rawFormat) {
-            self.audioFormat = format
-        } else {
-            self.audioFormat = .m4a
         }
         
         // Create default directory if needed

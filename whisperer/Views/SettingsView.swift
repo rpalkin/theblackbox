@@ -82,38 +82,12 @@ struct SettingsView: View {
                         .font(.caption)
                     }
                 }
-                
-                Divider()
-                
-                // Audio Format Section
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Audio Format", systemImage: "waveform")
-                        .font(.subheadline.weight(.medium))
-                    
-                    Picker("", selection: $settings.audioFormat) {
-                        ForEach(AppSettings.AudioFormat.allCases) { format in
-                            HStack {
-                                Text(format.displayName)
-                                Spacer()
-                            }
-                            .tag(format)
-                        }
-                    }
-                    .pickerStyle(.radioGroup)
-                    .labelsHidden()
-                    
-                    Text(settings.audioFormat == .m4a
-                         ? "Compressed format, smaller file size"
-                         : "Lossless format, larger file size")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
             .padding()
             
             Spacer()
         }
-        .frame(width: 380, height: 340)
+        .frame(width: 380, height: 250)
         .onAppear {
             checkDirectoryWritable()
         }
