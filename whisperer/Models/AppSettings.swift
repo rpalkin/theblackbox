@@ -8,13 +8,53 @@
 import SwiftUI
 internal import Combine
 
+nonisolated protocol SecurityScopedBookmarkManaging {
+    func bookmarkData(for url: URL) throws -> Data
+    func resolveURL(from bookmarkData: Data) throws -> URL
+}
+
+private nonisolated struct SystemSecurityScopedBookmarkManager: SecurityScopedBookmarkManaging {
+    func bookmarkData(for url: URL) throws -> Data {
+        try url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    func resolveURL(from bookmarkData: Data) throws -> URL {
+        var isStale = false
+        return try URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [.withSecurityScope, .withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    }
+}
+
+private enum AppSettingsError: LocalizedError {
+    case transcriptionDirectoryUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .transcriptionDirectoryUnavailable:
+            return "The transcript folder is unavailable. Choose it again in Settings."
+        }
+    }
+}
+
 @MainActor
 class AppSettings: ObservableObject {
     static let shared = AppSettings()
+
+    private let defaults: UserDefaults
+    private let bookmarkManager: any SecurityScopedBookmarkManaging
+    private var transcriptionOutputDirectoryBookmark: Data?
     
     @Published var outputDirectory: String {
         didSet {
-            UserDefaults.standard.set(outputDirectory, forKey: "outputDirectory")
+            defaults.set(outputDirectory, forKey: "outputDirectory")
             // Check if the new directory is writable
             _isOutputDirectoryWritable = nil
         }
@@ -22,7 +62,25 @@ class AppSettings: ObservableObject {
 
     @Published var transcriptionLanguage: String {
         didSet {
-            UserDefaults.standard.set(transcriptionLanguage, forKey: "transcriptionLanguage")
+            defaults.set(transcriptionLanguage, forKey: "transcriptionLanguage")
+        }
+    }
+
+    @Published var huggingFaceToken: String {
+        didSet {
+            defaults.set(huggingFaceToken, forKey: "huggingFaceToken")
+        }
+    }
+
+    @Published var autosaveTranscriptionsEnabled: Bool {
+        didSet {
+            defaults.set(autosaveTranscriptionsEnabled, forKey: "autosaveTranscriptionsEnabled")
+        }
+    }
+
+    @Published private(set) var transcriptionOutputDirectory: String {
+        didSet {
+            defaults.set(transcriptionOutputDirectory, forKey: "transcriptionOutputDirectory")
         }
     }
 
@@ -42,8 +100,12 @@ class AppSettings: ObservableObject {
     /// Cached result of directory writability check
     private var _isOutputDirectoryWritable: Bool?
     
-    init() {
-        let defaults = UserDefaults.standard
+    init(
+        defaults: UserDefaults = .standard,
+        bookmarkManager: any SecurityScopedBookmarkManaging = SystemSecurityScopedBookmarkManager()
+    ) {
+        self.defaults = defaults
+        self.bookmarkManager = bookmarkManager
         
         // Initialize properties with values from UserDefaults or defaults
         let savedDir = defaults.string(forKey: "outputDirectory")
@@ -57,9 +119,47 @@ class AppSettings: ObservableObject {
 
         self.transcriptionLanguage = defaults.string(forKey: "transcriptionLanguage") ?? "auto"
 
+        self.huggingFaceToken = defaults.string(forKey: "huggingFaceToken") ?? ""
+
+        self.autosaveTranscriptionsEnabled = defaults.bool(forKey: "autosaveTranscriptionsEnabled")
+        self.transcriptionOutputDirectory = defaults.string(forKey: "transcriptionOutputDirectory") ?? ""
+        self.transcriptionOutputDirectoryBookmark = defaults.data(forKey: "transcriptionOutputDirectoryBookmark")
+
         // Create default directory if needed
         if self.outputDirectory == defaultDir {
             try? FileManager.default.createDirectory(at: URL(fileURLWithPath: defaultDir), withIntermediateDirectories: true, attributes: nil)
+        }
+    }
+
+    func setTranscriptionOutputDirectory(_ url: URL) throws {
+        let bookmarkData = try bookmarkManager.bookmarkData(for: url)
+        transcriptionOutputDirectoryBookmark = bookmarkData
+        defaults.set(bookmarkData, forKey: "transcriptionOutputDirectoryBookmark")
+        transcriptionOutputDirectory = url.path
+    }
+
+    func clearTranscriptionOutputDirectory() {
+        transcriptionOutputDirectoryBookmark = nil
+        defaults.removeObject(forKey: "transcriptionOutputDirectoryBookmark")
+        transcriptionOutputDirectory = ""
+    }
+
+    func transcriptionAutosaveConfiguration() throws -> TranscriptionAutosaveConfiguration {
+        guard autosaveTranscriptionsEnabled,
+              !transcriptionOutputDirectory.isEmpty else {
+            return TranscriptionAutosaveConfiguration(isEnabled: false, directoryURL: nil)
+        }
+
+        guard let bookmarkData = transcriptionOutputDirectoryBookmark else {
+            throw AppSettingsError.transcriptionDirectoryUnavailable
+        }
+
+        do {
+            let directoryURL = try bookmarkManager.resolveURL(from: bookmarkData)
+            return TranscriptionAutosaveConfiguration(isEnabled: true, directoryURL: directoryURL)
+        } catch {
+            print("[AppSettings] Cannot resolve transcription output directory: \(error)")
+            throw AppSettingsError.transcriptionDirectoryUnavailable
         }
     }
     

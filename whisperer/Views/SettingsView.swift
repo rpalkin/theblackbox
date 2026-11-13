@@ -11,6 +11,7 @@ struct SettingsView: View {
     @StateObject private var settings = AppSettings.shared
     @EnvironmentObject var modelManager: FluidAudioModelManager
     @State private var isDirectoryWritable: Bool = true
+    @State private var transcriptionDirectoryError: String?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +30,8 @@ struct SettingsView: View {
             Divider()
             
             // Content
-            VStack(alignment: .leading, spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                 // Output Directory Section
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Output Directory", systemImage: "folder")
@@ -106,13 +108,82 @@ struct SettingsView: View {
                         .labelsHidden()
                         .frame(width: 140)
                     }
+
+                    HStack {
+                        Text("HuggingFace Token")
+                            .font(.subheadline)
+                        Spacer()
+                        SecureField("hf_…", text: $settings.huggingFaceToken)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 200)
+                    }
+
+                    Toggle(
+                        "Automatically save transcripts",
+                        isOn: $settings.autosaveTranscriptionsEnabled
+                    )
+
+                    if let transcriptionDirectoryError {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(transcriptionDirectoryError)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+
+                    HStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "folder.fill")
+                                .foregroundStyle(.secondary)
+                            Text(
+                                settings.transcriptionOutputDirectory.isEmpty
+                                    ? "No transcript folder selected"
+                                    : shortenPath(settings.transcriptionOutputDirectory)
+                            )
+                            .foregroundStyle(
+                                settings.transcriptionOutputDirectory.isEmpty ? .secondary : .primary
+                            )
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(settings.transcriptionOutputDirectory)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.05))
+                        .cornerRadius(6)
+
+                        Button("Browse...") {
+                            selectTranscriptionFolder()
+                        }
+                        .controlSize(.regular)
+                    }
+
+                    if !settings.transcriptionOutputDirectory.isEmpty {
+                        HStack {
+                            Spacer()
+                            Button("Clear Transcript Folder") {
+                                settings.clearTranscriptionOutputDirectory()
+                                transcriptionDirectoryError = nil
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
                 }
+                }
+                .padding()
             }
-            .padding()
 
             Spacer()
         }
-        .frame(width: 380, height: 440)
+        .frame(minWidth: 380, idealWidth: 480, minHeight: 520)
         .onAppear {
             checkDirectoryWritable()
         }
@@ -144,6 +215,32 @@ struct SettingsView: View {
                 settings.outputDirectory = url.path
                 checkDirectoryWritable()
             }
+        }
+    }
+
+    private func selectTranscriptionFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Select"
+        panel.message = "Choose a folder to save completed transcripts"
+
+        let saveSelectedFolder: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try settings.setTranscriptionOutputDirectory(url)
+                transcriptionDirectoryError = nil
+            } catch {
+                transcriptionDirectoryError = "Cannot access this folder. Please select a different location."
+            }
+        }
+
+        if let window = NSApp.windows.first(where: { $0.isKeyWindow }) {
+            panel.beginSheetModal(for: window, completionHandler: saveSelectedFolder)
+        } else {
+            saveSelectedFolder(panel.runModal())
         }
     }
     

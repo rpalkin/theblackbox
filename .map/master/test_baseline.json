@@ -1,6 +1,0 @@
-{
-  "branch": "master",
-  "status": "skipped",
-  "reason": "no test harness detected (Makefile with test: / pyproject.toml / pytest.ini / go.mod / Cargo.toml) at the repo root or any immediate subdirectory. Re-run with `--command \"<test cmd>\"` or `--module-dir <dir>` so the cross-subtask regression gate has a real baseline \u2014 without one it cannot tell an introduced regression from a pre-existing failure.",
-  "recorded_at": "2026-06-25T15:42:54.800502Z"
-}

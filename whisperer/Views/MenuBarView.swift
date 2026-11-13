@@ -146,8 +146,7 @@ struct MenuBarView: View {
                     shortcut: "⌘H",
                     isHovered: hoveredItem == "history"
                 ) {
-                    openWindow(id: "recording-history")
-                    NSApp.activate(ignoringOtherApps: true)
+                    openMainWindow(tab: .history)
                     dismiss()
                 }
                 .onHover { hovering in
@@ -158,39 +157,21 @@ struct MenuBarView: View {
                 Divider()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                 
-                // Settings button
-                if #available(macOS 14.0, *) {
-                    SettingsLink {
-                        MenuButtonContent(
-                            icon: "gear",
-                            iconColor: .primary,
-                            title: "Settings...",
-                            shortcut: "⌘,",
-                            isHovered: hoveredItem == "settings"
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        hoveredItem = hovering ? "settings" : nil
-                    }
-                    .keyboardShortcut(",", modifiers: [.command])
-                } else {
-                    MenuButton(
-                        icon: "gear",
-                        iconColor: .primary,
-                        title: "Settings...",
-                        shortcut: "⌘,",
-                        isHovered: hoveredItem == "settings"
-                    ) {
-                        openSettings()
-                        dismiss()
-                    }
-                    .onHover { hovering in
-                        hoveredItem = hovering ? "settings" : nil
-                    }
-                    .keyboardShortcut(",", modifiers: [.command])
+
+                MenuButton(
+                    icon: "gear",
+                    iconColor: .primary,
+                    title: "Settings...",
+                    shortcut: "⌘,",
+                    isHovered: hoveredItem == "settings"
+                ) {
+                    openMainWindow(tab: .settings)
+                    dismiss()
                 }
+                .onHover { hovering in
+                    hoveredItem = hovering ? "settings" : nil
+                }
+                .keyboardShortcut(",", modifiers: [.command])
                 
                 // Quit button
                 MenuButton(
@@ -215,12 +196,10 @@ struct MenuBarView: View {
         }
     }
     
-    private func openSettings() {
-        if #available(macOS 13.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+    private func openMainWindow(tab: MainWindowTab) {
+        MainWindowNavigation.shared.selectedTab = tab
+        DockIconController.openMain()
+        openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
     }
 }
@@ -350,7 +329,8 @@ struct ErrorBannerWithSettings: View {
     let message: String
     let showSettingsButton: Bool
     let onDismiss: () -> Void
-    
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -374,21 +354,14 @@ struct ErrorBannerWithSettings: View {
             if showSettingsButton {
                 HStack {
                     Spacer()
-                    if #available(macOS 14.0, *) {
-                        SettingsLink {
-                            Text("Open Settings")
-                                .font(.caption.weight(.medium))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    } else {
-                        Button("Open Settings") {
-                            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                            NSApp.activate(ignoringOtherApps: true)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                    Button("Open Settings") {
+                        MainWindowNavigation.shared.selectedTab = .settings
+                        DockIconController.openMain()
+                        openWindow(id: "main")
+                        NSApp.activate(ignoringOtherApps: true)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
             }
         }
@@ -399,6 +372,17 @@ struct ErrorBannerWithSettings: View {
 }
 
 #Preview {
-    MenuBarView(recordingState: RecordingState(permissionsManager: PermissionsManager()), permissionsManager: PermissionsManager())
+    let permissionsManager = PermissionsManager()
+    let modelManager = FluidAudioModelManager()
+    let transcriptionService = FluidAudioTranscriptionService(manager: modelManager)
+
+    MenuBarView(
+        recordingState: RecordingState(
+            permissionsManager: permissionsManager,
+            transcriptionService: transcriptionService,
+            modelManager: modelManager
+        ),
+        permissionsManager: permissionsManager
+    )
         .frame(width: 260)
 }

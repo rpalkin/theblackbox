@@ -18,9 +18,13 @@ struct WhispererApp: App {
 
     init() {
         let permissions = PermissionsManager()
-        let state = RecordingState(permissionsManager: permissions)
         let manager = FluidAudioModelManager()
         let service = FluidAudioTranscriptionService(manager: manager)
+        let state = RecordingState(
+            permissionsManager: permissions,
+            transcriptionService: service,
+            modelManager: manager
+        )
         _permissionsManager = StateObject(wrappedValue: permissions)
         _recordingState = StateObject(wrappedValue: state)
         _modelManager = StateObject(wrappedValue: manager)
@@ -51,13 +55,8 @@ struct WhispererApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
-            SettingsView()
-                .environmentObject(modelManager)
-        }
-
-        Window("Recording History", id: "recording-history") {
-            RecordingHistoryView(transcriptionService: transcriptionService)
+        Window("Whisperer", id: "main") {
+            MainWindowView(transcriptionService: transcriptionService)
                 .modelContainer(RecordingHistoryStore.sharedModelContainer)
                 .environmentObject(modelManager)
         }
@@ -77,11 +76,19 @@ class RecordingState: ObservableObject {
     
     private var timerTask: Task<Void, Never>?
     private let recordingService: AudioRecordingService
+    private let transcriptionService: FluidAudioTranscriptionService
+    private let modelManager: FluidAudioModelManager
     private let systemStopMonitor = SystemRecordingStopMonitor()
     private var isStoppingRecording = false
     
-    init(permissionsManager: PermissionsManager) {
+    init(
+        permissionsManager: PermissionsManager,
+        transcriptionService: FluidAudioTranscriptionService,
+        modelManager: FluidAudioModelManager
+    ) {
         self.recordingService = AudioRecordingService(permissionsManager: permissionsManager)
+        self.transcriptionService = transcriptionService
+        self.modelManager = modelManager
         
         // Wire up Zoom window close detection to show popup
         self.recordingService.onZoomWindowClosed = { [weak self] in
@@ -194,7 +201,20 @@ class RecordingState: ObservableObject {
 
     private func recordHistoryItem(audioFileURL: URL) {
         do {
-            try RecordingHistoryStore.insertRecording(audioFileURL: audioFileURL, duration: recordingDuration)
+            let item = try RecordingHistoryStore.insertRecording(
+                audioFileURL: audioFileURL,
+                duration: recordingDuration
+            )
+            let language = modelManager.languageHint(from: AppSettings.shared.transcriptionLanguage)
+
+            Task {
+                do {
+                    try await transcriptionService.transcribe(item: item, languageHint: language)
+                    print("[RecordingState] Automatic transcription completed: \(audioFileURL.path)")
+                } catch {
+                    print("[RecordingState] Automatic transcription failed: \(error.localizedDescription)")
+                }
+            }
         } catch {
             print("[RecordingState] Failed to save recording history item: \(error)")
         }

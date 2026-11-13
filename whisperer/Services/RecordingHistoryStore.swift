@@ -45,11 +45,17 @@ enum RecordingHistoryStore {
     }
 
     @MainActor
-    static func insertRecording(audioFileURL: URL, duration: TimeInterval, timestamp: Date = .now) throws {
+    @discardableResult
+    static func insertRecording(
+        audioFileURL: URL,
+        duration: TimeInterval,
+        timestamp: Date = .now
+    ) throws -> RecordingHistoryItem {
         let container = sharedModelContainer
         let item = RecordingHistoryItem(timestamp: timestamp, duration: duration, audioFileURL: audioFileURL)
         container.mainContext.insert(item)
         try container.mainContext.save()
+        return item
     }
 
     @MainActor

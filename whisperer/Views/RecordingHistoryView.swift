@@ -5,10 +5,14 @@
 
 import SwiftUI
 import SwiftData
+internal import AVFoundation
+internal import UniformTypeIdentifiers
 
 struct RecordingHistoryView: View {
     @Query(sort: [SortDescriptor(\RecordingHistoryItem.timestamp, order: .reverse)]) private var recordings: [RecordingHistoryItem]
     @State private var searchText = ""
+    @State private var loadErrorMessage: String?
+    @State private var expandedId: PersistentIdentifier?
     @EnvironmentObject var modelManager: FluidAudioModelManager
     let transcriptionService: FluidAudioTranscriptionService
 
@@ -43,18 +47,25 @@ struct RecordingHistoryView: View {
             if filteredRecordings.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(filteredRecordings) { item in
+                Form {
+                    ForEach(filteredRecordings) { item in
+                        Section {
                             RecordingHistoryRow(
                                 item: item,
+                                isExpanded: expandedId == item.persistentModelID,
                                 modelManager: modelManager,
-                                transcriptionService: transcriptionService
+                                transcriptionService: transcriptionService,
+                                onToggleExpand: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        expandedId = expandedId == item.persistentModelID ? nil : item.persistentModelID
+                                    }
+                                }
                             )
                         }
                     }
-                    .padding(16)
                 }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
                 .background(Color(nsColor: .windowBackgroundColor))
             }
         }
@@ -73,6 +84,19 @@ struct RecordingHistoryView: View {
                 }
 
                 Spacer()
+
+                Button {
+                    presentLoadPanel()
+                } label: {
+                    Label("Load", systemImage: "square.and.arrow.down")
+                }
+            }
+
+            if let loadErrorMessage {
+                Text(loadErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
@@ -105,6 +129,42 @@ struct RecordingHistoryView: View {
         .padding()
     }
 
+    private func presentLoadPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.audio, .movie, .audiovisualContent]
+        panel.message = "Select audio recordings to add to history"
+        panel.prompt = "Load"
+
+        guard panel.runModal() == .OK else { return }
+
+        let urls = panel.urls
+        Task { await loadFiles(urls) }
+    }
+
+    @MainActor
+    private func loadFiles(_ urls: [URL]) async {
+        var failures: [String] = []
+        for url in urls {
+            do {
+                let asset = AVURLAsset(url: url)
+                let duration = try await asset.load(.duration)
+                let seconds = CMTimeGetSeconds(duration)
+                let timestamp = (try? FileManager.default.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .now
+                try RecordingHistoryStore.insertRecording(
+                    audioFileURL: url,
+                    duration: seconds.isFinite ? seconds : 0,
+                    timestamp: timestamp
+                )
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        loadErrorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -130,16 +190,22 @@ struct RecordingHistoryView: View {
 
 private struct RecordingHistoryRow: View {
     let item: RecordingHistoryItem
+    let isExpanded: Bool
     @ObservedObject var modelManager: FluidAudioModelManager
     @StateObject private var viewModel: TranscriptionRowViewModel
+    let onToggleExpand: () -> Void
 
     init(
         item: RecordingHistoryItem,
+        isExpanded: Bool,
         modelManager: FluidAudioModelManager,
-        transcriptionService: FluidAudioTranscriptionService
+        transcriptionService: FluidAudioTranscriptionService,
+        onToggleExpand: @escaping () -> Void
     ) {
         self.item = item
+        self.isExpanded = isExpanded
         self.modelManager = modelManager
+        self.onToggleExpand = onToggleExpand
         _viewModel = StateObject(wrappedValue: TranscriptionRowViewModel(
             transcriptionService: transcriptionService,
             modelManager: modelManager
@@ -167,76 +233,96 @@ private struct RecordingHistoryRow: View {
         return ""
     }
 
+    private var hasTranscript: Bool {
+        if let t = item.text_me, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return false
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.accentColor.opacity(0.14))
-                Image(systemName: "doc.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
-            }
-            .frame(width: 44, height: 44)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentColor.opacity(0.14))
+                    Image(systemName: "doc.fill")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 44, height: 44)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(item.audioFileURL.lastPathComponent)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Text(Self.durationFormatter.string(from: item.duration) ?? "0s")
-                        .font(.system(.caption, design: .monospaced).weight(.medium))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(item.audioFileURL.lastPathComponent)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text(Self.durationFormatter.string(from: item.duration) ?? "0s")
+                            .font(.system(.caption, design: .monospaced).weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text("\(Self.dateFormatter.string(from: item.timestamp)) at \(Self.timeFormatter.string(from: item.timestamp))")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
-                Text("\(Self.dateFormatter.string(from: item.timestamp)) at \(Self.timeFormatter.string(from: item.timestamp))")
-                    .font(.subheadline)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.easeInOut(duration: 0.2), value: isExpanded)
+                    .padding(.top, 14)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onToggleExpand() }
 
-                HStack(spacing: 8) {
-                    Text(item.audioFileURL.path)
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(item.audioFileURL.path)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer(minLength: 8)
+
+                        Button("Reveal") {
+                            NSWorkspace.shared.activateFileViewerSelecting([item.audioFileURL])
+                        }
+                        .buttonStyle(.link)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
 
-                    Spacer(minLength: 8)
-
-                    Button("Reveal") {
-                        NSWorkspace.shared.activateFileViewerSelecting([item.audioFileURL])
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-
-                    Button(transcribeButtonLabel) {
-                        viewModel.transcribe(item: item)
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                    .disabled(transcribeButtonDisabled)
-                    .help(transcribeButtonTooltip)
-                }
-
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
+                        Button(transcribeButtonLabel) {
+                            viewModel.transcribe(item: item)
+                        }
+                        .buttonStyle(.link)
                         .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                        .disabled(transcribeButtonDisabled)
+                        .help(transcribeButtonTooltip)
+                    }
 
-                if let textMe = item.text_me, !textMe.isEmpty {
-                    TranscriptionTextView(label: "Me", text: textMe)
-                }
+                    if let errorMessage = viewModel.errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-                if let textAudio = item.text_audio, !textAudio.isEmpty {
-                    TranscriptionTextView(label: "System", text: textAudio)
+                    if let dialog = item.text_me, !dialog.isEmpty {
+                        TranscriptionTextView(label: "Transcript", text: dialog)
+                    } else {
+                        Text("No transcription yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .padding(.top, 10)
             }
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -266,15 +352,32 @@ private struct TranscriptionTextView: View {
     let label: String
     let text: String
 
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                } label: {
+                    Label("Copy transcription", systemImage: "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.link)
+                .disabled(isEmpty)
+            }
             Text(text)
                 .font(.caption)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)

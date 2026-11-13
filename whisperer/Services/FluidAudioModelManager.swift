@@ -39,6 +39,8 @@ enum FluidAudioModelManagerError: LocalizedError {
     case operationInProgress
     case transcriptionInProgress
     case modelUnavailable(String)
+    case stalled
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +50,10 @@ enum FluidAudioModelManagerError: LocalizedError {
             return "Cannot delete the model while a transcription is in progress."
         case .modelUnavailable(let message):
             return message
+        case .stalled:
+            return "Download stalled while listing files. Check your network and try again."
+        case .cancelled:
+            return "Model download was cancelled."
         }
     }
 }
@@ -64,6 +70,9 @@ final class FluidAudioModelManager: ObservableObject {
     private let modelVersion: AsrModelVersion
     private var cachedAsrManager: AsrManager?
     private var loadingTask: Task<AsrManager, Error>?
+    private var watchdogTask: Task<Void, Never>?
+    private var lastProgressAt: Date = .distantPast
+    private let stallTimeout: TimeInterval = 120
 
     init(
         fileManager: FileManager = .default,
@@ -76,7 +85,17 @@ final class FluidAudioModelManager: ObservableObject {
         self.isInstalled = Self.modelsExist(at: cacheDirectory, version: modelVersion)
     }
 
+    private func configureHuggingFaceToken() {
+        let token = AppSettings.shared.huggingFaceToken
+        if token.isEmpty {
+            unsetenv("HF_TOKEN")
+        } else {
+            setenv("HF_TOKEN", token, 1)
+        }
+    }
+
     func downloadAndLoadIfNeeded() async {
+        configureHuggingFaceToken()
         lastError = nil
 
         if cachedAsrManager != nil, verifyInstalled() {
@@ -97,6 +116,7 @@ final class FluidAudioModelManager: ObservableObject {
 
         downloadProgress = 0
         currentPhase = .listing
+        lastProgressAt = Date()
 
         let loadingTask = Task<AsrManager, Error> {
             let models = try await AsrModels.downloadAndLoad(
@@ -111,19 +131,51 @@ final class FluidAudioModelManager: ObservableObject {
         }
 
         self.loadingTask = loadingTask
+        startWatchdog(for: loadingTask)
 
         do {
             cachedAsrManager = try await loadingTask.value
             isInstalled = verifyInstalled()
+            lastError = nil
+        } catch is CancellationError {
+            cachedAsrManager = nil
+            isInstalled = verifyInstalled()
+            if lastError == nil {
+                lastError = FluidAudioModelManagerError.cancelled.localizedDescription
+            }
         } catch {
             cachedAsrManager = nil
             isInstalled = verifyInstalled()
             lastError = Self.userReadableMessage(from: error)
         }
 
+        watchdogTask?.cancel()
+        watchdogTask = nil
         self.loadingTask = nil
         downloadProgress = nil
         currentPhase = nil
+    }
+
+    func cancel() {
+        guard let task = loadingTask else { return }
+        lastError = FluidAudioModelManagerError.cancelled.localizedDescription
+        task.cancel()
+        watchdogTask?.cancel()
+    }
+
+    private func startWatchdog(for task: Task<AsrManager, Error>) {
+        watchdogTask?.cancel()
+        watchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+                guard let self, !task.isCancelled else { return }
+                if Date().timeIntervalSince(self.lastProgressAt) > self.stallTimeout {
+                    self.lastError = FluidAudioModelManagerError.stalled.localizedDescription
+                    task.cancel()
+                    return
+                }
+            }
+        }
     }
 
     func deleteCache() async {
@@ -207,6 +259,7 @@ final class FluidAudioModelManager: ObservableObject {
     private func apply(progress: DownloadUtils.DownloadProgress) {
         downloadProgress = min(max(progress.fractionCompleted, 0), 1)
         currentPhase = ModelDownloadPhase(progress.phase)
+        lastProgressAt = Date()
     }
 
     private static let allowedLanguageCodes: Set<String> = [

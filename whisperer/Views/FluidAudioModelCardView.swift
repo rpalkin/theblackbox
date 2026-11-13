@@ -30,10 +30,17 @@ struct FluidAudioModelCardView: View {
             if let progress = manager.downloadProgress {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
-                    if let phase = manager.currentPhase {
-                        Text(phase.displayName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    HStack {
+                        if let phase = manager.currentPhase {
+                            Text(phase.displayName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Cancel") {
+                            manager.cancel()
+                        }
+                        .controlSize(.small)
                     }
                 }
             } else if manager.isInstalled {
